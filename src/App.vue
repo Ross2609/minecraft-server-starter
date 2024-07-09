@@ -1,29 +1,80 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
-import HelloWorld from './components/HelloWorld.vue'
+import { ref } from 'vue'
+import Button from 'primevue/button'
+import 'primeicons/primeicons.css'
+
+const status = ref('Online')
 </script>
 
 <template>
   <header>
-    <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="125" height="125" />
-
     <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-
-      <nav>
-        <RouterLink to="/">Home</RouterLink>
-        <RouterLink to="/about">About</RouterLink>
-      </nav>
+      <h1>Minecraft Server Starter</h1>
     </div>
   </header>
-
-  <RouterView />
+  <main>
+    <h3
+      :class="{
+        red: status === 'Offline',
+        green: status === 'Online'
+      }"
+    >
+      Server Status: {{ status }}
+    </h3>
+    <Button
+      class="button"
+      v-if="status === 'Offline'"
+      icon="pi pi-play"
+      label="Start Server"
+      @click="status = 'Online'"
+    />
+    <Button
+      class="button"
+      v-else
+      icon="pi pi-times"
+      label="Stop Server"
+      severity="danger"
+      @click="status = 'Offline'"
+    />
+  </main>
 </template>
 
 <style scoped>
+.red {
+  color: rgb(233, 122, 122);
+}
+
+.green {
+  color: rgb(122, 233, 146);
+}
+
+.button {
+  width: 50%;
+}
+
+h1 {
+  font-weight: 700;
+  font-size: 4rem;
+}
+
+h3 {
+  font-weight: 600;
+  font-size: 1.6rem;
+}
+
 header {
   line-height: 1.5;
   max-height: 100vh;
+  text-align: center;
+}
+
+main {
+  display: flex;
+  text-align: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  justify-content: center;
 }
 
 .logo {
@@ -56,11 +107,28 @@ nav a:first-of-type {
   border: 0;
 }
 
+@media (max-width: 1024px) {
+  main {
+    padding-top: 3rem;
+  }
+
+  h1 {
+    font-weight: 700;
+    font-size: 2rem;
+  }
+
+  h3 {
+    font-weight: 600;
+    font-size: 1rem;
+  }
+}
+
 @media (min-width: 1024px) {
   header {
     display: flex;
     place-items: center;
     padding-right: calc(var(--section-gap) / 2);
+    margin-left: 4rem;
   }
 
   .logo {
