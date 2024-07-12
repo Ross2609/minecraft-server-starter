@@ -1,9 +1,189 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import Button from 'primevue/button'
 import 'primeicons/primeicons.css'
 
-const status = ref('Online')
+const server = reactive({ status: '', active: false, publicIp: '', running: false })
+const buttonMessage = computed(() => (server.active ? 'Stop Server' : 'Start Server'))
+const icon = computed(() => 'pi ' + (server.active ? 'pi-stop' : 'pi-play'))
+const busy = ref(false)
+const serverLoading = computed(() => {
+  let loading = true
+  loading = ['Running', 'Stopped'].every((status) => status !== server.status)
+  if (server.status === 'Running' && server.publicIp === '') {
+    loading = true
+  }
+
+  return !(!loading || !busy.value)
+})
+
+onMounted(async () => {
+  refreshServerInfo()
+})
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const sendRequest = async (body: object, path: string, method: string) => {
+  try {
+    await fetch('https://yuai6u56z8.execute-api.eu-west-1.amazonaws.com/' + path, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(async (response) => {
+      const readable = response.body
+
+      if (readable === null || readable === undefined) {
+        throw new Error('Could not get instance information.')
+      }
+
+      const reader = readable.getReader()
+
+      let chunks = []
+      let done, value
+
+      while (!done) {
+        ;({ done, value } = await reader.read())
+        if (value) {
+          chunks.push(value)
+        }
+      }
+
+      // Concatenate all Uint8Array chunks into one Uint8Array
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+      const combinedChunks = new Uint8Array(totalLength)
+      let position = 0
+      for (const chunk of chunks) {
+        combinedChunks.set(chunk, position)
+        position += chunk.length
+      }
+
+      // Convert the combined Uint8Array to a string
+      const result = new TextDecoder().decode(combinedChunks)
+      busy.value = false
+      return result
+    })
+  } catch (err) {
+    console.error('Error starting instance', err)
+  }
+}
+
+const refreshServerInfo = async () => {
+  let instanceInfo = await getInstanceInfo()
+
+  if (instanceInfo !== null && instanceInfo !== undefined) {
+    const instanceInfoParsed = JSON.parse(instanceInfo)
+
+    server.status = toTitleCase(instanceInfoParsed?.Reservations[0].Instances[0].State.Name)
+    server.publicIp = instanceInfoParsed?.Reservations[0].Instances[0].PublicIpAddress
+
+    if (server.status !== 'Running' || (server.status === 'Running' && server.publicIp === '')) {
+      setTimeout(() => {
+        refreshServerInfo()
+      }, 2000)
+    } else {
+      server.active = server.status === 'Running'
+      server.running = server.active === true
+      return
+    }
+  }
+}
+
+const toTitleCase = (str: string) => {
+  return str
+    .toLowerCase()
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+const getInstanceInfo = async () => {
+  try {
+    return fetch('https://yuai6u56z8.execute-api.eu-west-1.amazonaws.com/server', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    }).then(async (response) => {
+      const readable = response.body
+
+      if (readable === null || readable === undefined) {
+        throw new Error('Could not get instance information.')
+      }
+
+      const reader = readable.getReader()
+
+      let chunks = []
+      let done, value
+
+      while (!done) {
+        ;({ done, value } = await reader.read())
+        if (value) {
+          chunks.push(value)
+        }
+      }
+
+      // Concatenate all Uint8Array chunks into one Uint8Array
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+      const combinedChunks = new Uint8Array(totalLength)
+      let position = 0
+      for (const chunk of chunks) {
+        combinedChunks.set(chunk, position)
+        position += chunk.length
+      }
+
+      // Convert the combined Uint8Array to a string
+      const result = new TextDecoder().decode(combinedChunks)
+      return result
+    })
+  } catch (err) {
+    console.error('Error starting instance', err)
+  }
+}
+
+const startMinecraftServer = async () => {
+  await sendRequest({ action: 'start' }, 'server/minecraft', 'POST')
+}
+
+const toggleServer = async () => {
+  busy.value = true
+  server.active = !server.active
+
+  const body = { action: 'stop' }
+
+  if (server.active) {
+    body.action = 'start'
+    server.status = 'Starting...'
+  } else {
+    server.publicIp = ''
+  }
+
+  await sendRequest(body, 'server', 'POST')
+
+  if (server.active) {
+    while (!server.running) {
+      await refreshServerInfo()
+      await delay(5000)
+    }
+
+    // Wait 20 seconds for AWS Instance to initialiase and prepare to receive commands from SSM
+    setTimeout(() => {
+      console.log('starting')
+      startMinecraftServer()
+    }, 20000)
+  } else {
+    body.action = 'stop'
+    server.status = 'Shutting Down Minecraft Server'
+
+    await sendRequest(body, 'server/minecraft', 'POST')
+
+    await delay(5000)
+    await sendRequest(body, 'server', 'POST')
+
+    await delay(2000)
+    refreshServerInfo()
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -13,28 +193,32 @@ const status = ref('Online')
     </div>
   </header>
   <main>
-    <h3
+    <section
       :class="{
-        red: status === 'Offline',
-        green: status === 'Online'
+        borderRed: !server.active,
+        borderYellow: serverLoading,
+        borderGreen: server.running
       }"
+      class="server-details"
     >
-      Server Status: {{ status }}
-    </h3>
+      <h3>Server Details</h3>
+      <p
+        :class="{
+          red: !server.active,
+          green: server.active
+        }"
+      >
+        Status: {{ server.status }}
+      </p>
+      <p v-if="server.active">IP: {{ server.active ? server.publicIp : '' }}</p>
+    </section>
     <Button
+      :disabled="serverLoading"
       class="button"
-      v-if="status === 'Offline'"
-      icon="pi pi-play"
-      label="Start Server"
-      @click="status = 'Online'"
-    />
-    <Button
-      class="button"
-      v-else
-      icon="pi pi-times"
-      label="Stop Server"
-      severity="danger"
-      @click="status = 'Offline'"
+      :icon="icon"
+      @click="toggleServer()"
+      :label="buttonMessage"
+      :severity="server.active ? 'danger' : ''"
     />
   </main>
 </template>
@@ -52,6 +236,18 @@ const status = ref('Online')
   width: 50%;
 }
 
+.borderRed {
+  border: #db6161 2px solid;
+}
+
+.borderGreen {
+  border: #61db67 2px solid;
+}
+
+.borderYellow {
+  border: #d3db61 2px solid;
+}
+
 h1 {
   font-weight: 700;
   font-size: 4rem;
@@ -63,12 +259,14 @@ h3 {
 }
 
 header {
+  color: rgb(206, 196, 196);
   line-height: 1.5;
   max-height: 100vh;
   text-align: center;
 }
 
 main {
+  color: rgb(238, 231, 231);
   display: flex;
   text-align: center;
   flex-direction: column;
@@ -77,34 +275,15 @@ main {
   justify-content: center;
 }
 
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
+.server-details {
+  background: #000000aa;
+  padding: 1rem;
+  border-radius: 1rem;
 }
 
-nav {
-  width: 100%;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 2rem;
-}
-
-nav a.router-link-exact-active {
-  color: var(--color-text);
-}
-
-nav a.router-link-exact-active:hover {
-  background-color: transparent;
-}
-
-nav a {
-  display: inline-block;
-  padding: 0 1rem;
-  border-left: 1px solid var(--color-border);
-}
-
-nav a:first-of-type {
-  border: 0;
+.server-details > p {
+  font-size: 1.2rem;
+  font-weight: 600;
 }
 
 @media (max-width: 1024px) {
@@ -129,25 +308,6 @@ nav a:first-of-type {
     place-items: center;
     padding-right: calc(var(--section-gap) / 2);
     margin-left: 4rem;
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  nav {
-    text-align: left;
-    margin-left: -1rem;
-    font-size: 1rem;
-
-    padding: 1rem 0;
-    margin-top: 1rem;
   }
 }
 </style>
